@@ -1,162 +1,67 @@
-# Function to validate input choices with added logging
-function Validate-Action {
-    param ([string]$input)
-
-    # Log the input for debugging
-    Write-Host "Raw input received: '$input'" -ForegroundColor Cyan
-
-    # Try to cast input to an integer
-    try {
-        $inputInt = [int]$input
-        Write-Host "Converted input to integer: $inputInt" -ForegroundColor Cyan
-    } catch {
-        Write-Host "Invalid input. Please choose a number between 1 and 7." -ForegroundColor Red
-        return $false
+# Ensure that the user is authenticated with Azure
+try {
+    $azContext = Get-AzContext
+    if (-not $azContext) {
+        Write-Host "No Azure session found. Please log in." -ForegroundColor Yellow
+        Connect-AzAccount
     }
-
-    # Validate if the input is between 1 and 7
-    if ($inputInt -ge 1 -and $inputInt -le 7) {
-        return $true
-    } else {
-        Write-Host "Invalid input. Please choose a number between 1 and 7." -ForegroundColor Red
-        return $false
-    }
+} catch {
+    Write-Host "Azure authentication required. Logging in..." -ForegroundColor Yellow
+    Connect-AzAccount
 }
 
-# Function to check if the Key Vault exists
-function Check-KeyVaultExists {
-    param (
-        [string]$vaultName,
-        [string]$resourceGroupName
-    )
-
-    $keyVault = Get-AzKeyVault -VaultName $vaultName -ResourceGroupName $resourceGroupName -ErrorAction SilentlyContinue
-    if ($null -eq $keyVault) {
-        Write-Host "Key Vault '$vaultName' does not exist." -ForegroundColor Red
-        return $false
-    } else {
-        Write-Host "Key Vault '$vaultName' exists." -ForegroundColor Green
-        return $true
-    }
-}
-
-# Prompt for Key Vault name and resource group
+# Prompt for Key Vault name, resource group, and location
 $vaultName = Read-Host -Prompt "Enter the name of the Key Vault"
 $resourceGroupName = Read-Host -Prompt "Enter the name of the resource group"
 $location = Read-Host -Prompt "Enter the Azure region (e.g., eastus, westeurope)"
 
-# Check if Key Vault already exists before creating
-if (-not (Check-KeyVaultExists -vaultName $vaultName -resourceGroupName $resourceGroupName)) {
+# Check if the Key Vault exists
+$keyVault = Get-AzKeyVault -VaultName $vaultName -ResourceGroupName $resourceGroupName -ErrorAction SilentlyContinue
+
+if ($keyVault) {
+    Write-Host "Key Vault '$vaultName' already exists in resource group '$resourceGroupName'." -ForegroundColor Yellow
+} else {
     # Create the Key Vault if it doesn't exist
     Write-Host "Creating Key Vault..." -ForegroundColor Green
     New-AzKeyVault -ResourceGroupName $resourceGroupName -VaultName $vaultName -Location $location
+    Write-Host "Key Vault '$vaultName' created successfully in resource group '$resourceGroupName'." -ForegroundColor Green
+}
+
+# Prompt the user for what they want to create (secret, key, or certificate)
+$createChoice = Read-Host -Prompt "What do you want to create in the Key Vault? (secret/key/certificate/none)"
+
+if ($createChoice -eq 'secret') {
+    # Prompt for secret name and value
+    $secretName = Read-Host -Prompt "Enter the name of the secret"
+    $secretValue = Read-Host -Prompt "Enter the value of the secret"
+
+    # Add the secret to the Key Vault
+    Write-Host "Creating secret '$secretName'..." -ForegroundColor Green
+    Set-AzKeyVaultSecret -VaultName $vaultName -Name $secretName -SecretValue (ConvertTo-SecureString $secretValue -AsPlainText -Force)
+    Write-Host "Secret '$secretName' created successfully." -ForegroundColor Green
+
+} elseif ($createChoice -eq 'key') {
+    # Prompt for key name and type
+    $keyName = Read-Host -Prompt "Enter the name of the key"
+    $keyType = Read-Host -Prompt "Enter the key type (e.g., RSA, RSA-HSM, EC, EC-HSM)"
+    
+    # Add the key to the Key Vault
+    Write-Host "Creating key '$keyName'..." -ForegroundColor Green
+    Add-AzKeyVaultKey -VaultName $vaultName -Name $keyName -KeyType $keyType -KeyOps "encrypt", "decrypt"
+    Write-Host "Key '$keyName' created successfully." -ForegroundColor Green
+
+} elseif ($createChoice -eq 'certificate') {
+    # Prompt for certificate name
+    $certName = Read-Host -Prompt "Enter the name of the certificate"
+    
+    # Create a default certificate policy
+    $certPolicy = New-AzKeyVaultCertificatePolicy -SecretContentType 'application/x-pkcs12' -IssuerName 'Self' -SubjectName "CN=$certName"
+
+    # Add the certificate to the Key Vault
+    Write-Host "Creating certificate '$certName'..." -ForegroundColor Green
+    Add-AzKeyVaultCertificate -VaultName $vaultName -Name $certName -CertificatePolicy $certPolicy
+    Write-Host "Certificate '$certName' created successfully." -ForegroundColor Green
+
 } else {
-    Write-Host "Key Vault already exists, skipping creation." -ForegroundColor Yellow
+    Write-Host "No item was created. Exiting script." -ForegroundColor Yellow
 }
-
-# Key Vault management options
-function Manage-KeyVault {
-    param (
-        [string]$vaultName,
-        [string]$resourceGroupName
-    )
-
-    while ($true) {
-        $action = Read-Host -Prompt "Choose an action: 1) Add secret 2) Retrieve secret 3) Add key 4) Retrieve key 5) Add certificate 6) Retrieve certificate 7) Exit"
-
-        # Log input
-        Write-Host "Action selected: $action" -ForegroundColor Cyan
-
-        # Validate the input action
-        if (-not (Validate-Action -input $action)) {
-            continue
-        }
-
-        # Cast input to integer for easier comparison
-        $actionInt = [int]$action
-
-        if ($actionInt -eq 1) {
-            # Add a secret to the Key Vault
-            $secretName = Read-Host -Prompt "Enter the name of the secret"
-            $secretValue = Read-Host -Prompt "Enter the value of the secret"
-            if ($secretName -and $secretValue) {
-                Write-Host "Adding secret..." -ForegroundColor Green
-                Set-AzKeyVaultSecret -VaultName $vaultName -Name $secretName -SecretValue (ConvertTo-SecureString $secretValue -AsPlainText -Force)
-            } else {
-                Write-Host "Secret name and value cannot be empty." -ForegroundColor Red
-            }
-        }
-        elseif ($actionInt -eq 2) {
-            # Retrieve a secret from the Key Vault
-            $secretName = Read-Host -Prompt "Enter the name of the secret"
-            if ($secretName) {
-                $secret = Get-AzKeyVaultSecret -VaultName $vaultName -Name $secretName -ErrorAction SilentlyContinue
-                if ($secret) {
-                    Write-Host "Secret Value: $($secret.SecretValueText)" -ForegroundColor Yellow
-                } else {
-                    Write-Host "Secret '$secretName' not found." -ForegroundColor Red
-                }
-            } else {
-                Write-Host "Secret name cannot be empty." -ForegroundColor Red
-            }
-        }
-        elseif ($actionInt -eq 3) {
-            # Add a key to the Key Vault
-            $keyName = Read-Host -Prompt "Enter the name of the key"
-            if ($keyName) {
-                Write-Host "Adding key..." -ForegroundColor Green
-                Add-AzKeyVaultKey -VaultName $vaultName -Name $keyName -KeyOps "encrypt", "decrypt"
-            } else {
-                Write-Host "Key name cannot be empty." -ForegroundColor Red
-            }
-        }
-        elseif ($actionInt -eq 4) {
-            # Retrieve a key from the Key Vault
-            $keyName = Read-Host -Prompt "Enter the name of the key"
-            if ($keyName) {
-                $key = Get-AzKeyVaultKey -VaultName $vaultName -Name $keyName -ErrorAction SilentlyContinue
-                if ($key) {
-                    Write-Host "Key ID: $($key.Id)" -ForegroundColor Yellow
-                } else {
-                    Write-Host "Key '$keyName' not found." -ForegroundColor Red
-                }
-            } else {
-                Write-Host "Key name cannot be empty." -ForegroundColor Red
-            }
-        }
-        elseif ($actionInt -eq 5) {
-            # Add a certificate to the Key Vault
-            $certName = Read-Host -Prompt "Enter the name of the certificate"
-            if ($certName) {
-                $certPolicy = Get-AzKeyVaultCertificatePolicy -VaultName $vaultName -CertificatePolicyDefault
-                Write-Host "Adding certificate..." -ForegroundColor Green
-                Add-AzKeyVaultCertificate -VaultName $vaultName -Name $certName -CertificatePolicy $certPolicy
-            } else {
-                Write-Host "Certificate name cannot be empty." -ForegroundColor Red
-            }
-        }
-        elseif ($actionInt -eq 6) {
-            # Retrieve a certificate from the Key Vault
-            $certName = Read-Host -Prompt "Enter the name of the certificate"
-            if ($certName) {
-                $cert = Get-AzKeyVaultCertificate -VaultName $vaultName -Name $certName -ErrorAction SilentlyContinue
-                if ($cert) {
-                    Write-Host "Certificate Thumbprint: $($cert.X509Thumbprint)" -ForegroundColor Yellow
-                } else {
-                    Write-Host "Certificate '$certName' not found." -ForegroundColor Red
-                }
-            } else {
-                Write-Host "Certificate name cannot be empty." -ForegroundColor Red
-            }
-        }
-        elseif ($actionInt -eq 7) {
-            Write-Host "Exiting..." -ForegroundColor Red
-            break
-        } else {
-            Write-Host "Invalid option. Please try again." -ForegroundColor Red
-        }
-    }
-}
-
-# Call the management function
-Manage-KeyVault -vaultName $vaultName -resourceGroupName $resourceGroupName
