@@ -1,15 +1,3 @@
-# Ensure that the user is authenticated with Azure
-try {
-    $azContext = Get-AzContext
-    if (-not $azContext) {
-        Write-Host "No Azure session found. Please log in." -ForegroundColor Yellow
-        Connect-AzAccount
-    }
-} catch {
-    Write-Host "Azure authentication required. Logging in..." -ForegroundColor Yellow
-    Connect-AzAccount
-}
-
 # Prompt for Key Vault name, resource group, and location
 $vaultName = Read-Host -Prompt "Enter the name of the Key Vault"
 $resourceGroupName = Read-Host -Prompt "Enter the name of the resource group"
